@@ -67,7 +67,7 @@ def toKWh(joules):
 
 def soc_from_voltage(voltage):
     # very approximate!!!
-    return 100 * (voltage - EMPTY_VOLTAGE)/(FULL_VOLTAGE - EMPTY_VOLTAGE)
+    return 100 * (min(voltage, FULL_VOLTAGE) - EMPTY_VOLTAGE)/(FULL_VOLTAGE - EMPTY_VOLTAGE)
 
 
 class BatteryService:
