@@ -24,6 +24,8 @@ CONNECTED = 1
 FULL_VOLTAGE = 12.8
 EMPTY_VOLTAGE = 11.8
 
+MAX_VOLTAGE_HISTORY = 5
+
 HIGH_VOLTAGE_ALARM = 14.8
 LOW_VOLTAGE_ALARM = 12.2
 
@@ -102,6 +104,7 @@ class BatteryService:
         })
         self.lastInPower = None
         self.lastOutPower = None
+        self.voltageHistory = []
 
     def _get_value(self, serviceName, path, defaultValue=None):
         return self.monitor.get_value(serviceName, path, defaultValue)
@@ -162,9 +165,16 @@ class BatteryService:
                 self.service["/History/DischargedEnergy"] += round(toKWh((self.lastOutPower.power + outPower)/2 * (now - self.lastOutPower.timestamp)), 7)
             self.lastOutPower = PowerSample(outPower, now)
 
-            if batteryVoltage <= LOW_VOLTAGE_ALARM:
+            self.voltageHistory.append(batteryVoltage)
+            voltageHistoryLen = len(self.voltageHistory)
+            if voltageHistoryLen > MAX_VOLTAGE_HISTORY:
+                del self.voltageHistory[:voltageHistoryLen-MAX_VOLTAGE_HISTORY]
+            # median filter
+            filteredVoltage = sorted(self.voltageHistory)[voltageHistoryLen//2]
+            # use a filtered value for alarm checking to remove any transients/noise
+            if filteredVoltage <= LOW_VOLTAGE_ALARM:
                 self.service["/Alarms/LowVoltage"] = ALARM_ALARM
-            if batteryVoltage >= HIGH_VOLTAGE_ALARM:
+            if filteredVoltage >= HIGH_VOLTAGE_ALARM:
                 self.service["/Alarms/HighVoltage"] = ALARM_ALARM
         return True
 
