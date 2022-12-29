@@ -67,6 +67,10 @@ def toKWh(joules):
     return joules/3600/1000
 
 
+def toAh(joules, voltage):
+    return joules/voltage/3600
+
+
 def soc_from_voltage(voltage):
     # very approximate!!!
     return 100 * (min(voltage, FULL_VOLTAGE) - EMPTY_VOLTAGE)/(FULL_VOLTAGE - EMPTY_VOLTAGE)
@@ -85,6 +89,9 @@ class BatteryService:
         self.service.add_path("/History/MaximumVoltage", None, gettextcallback=lambda path,value: "{:.2f}V".format(value))
         self.service.add_path("/History/ChargedEnergy", 0, gettextcallback=lambda path,value: "{:.6f}kWh".format(value))
         self.service.add_path("/History/DischargedEnergy", 0, gettextcallback=lambda path,value: "{:.6f}kWh".format(value))
+        self.service.add_path("/History/TotalAhDrawn", 0, gettextcallback=lambda path,value: "{:.3f}Ah".format(value))
+        self.service.add_path("/History/DeepestDischarge", None, gettextcallback=lambda path,value: "{:.0f}%".format(value))
+        self.service.add_path("/History/FullDischarges", 0)
         self.service.add_path("/Alarms/LowVoltage", ALARM_OK)
         self.service.add_path("/Alarms/HighVoltage", ALARM_OK)
         options = None  # currently not used afaik
@@ -148,9 +155,15 @@ class BatteryService:
         if batteryVoltage:
             self.service["/Dc/0/Voltage"] = round(batteryVoltage, 3)
             self.service["/Dc/0/Power"] = round(batteryVoltage * totalCurrent, 3)
-            self.service["/Soc"] = soc_from_voltage(batteryVoltage)
+            soc = soc_from_voltage(batteryVoltage)
+            self.service["/Soc"] = soc
             self.service["/History/MinimumVoltage"] = _safe_min(batteryVoltage, self.service["/History/MinimumVoltage"])
             self.service["/History/MaximumVoltage"] = _safe_max(batteryVoltage, self.service["/History/MaximumVoltage"])
+            deepestDischarge = self.service["/History/DeepestDischarge"]
+            if deepestDischarge is None or soc < deepestDischarge:
+                self.service["/History/DeepestDischarge"] = soc
+            if batteryVoltage <= EMPTY_VOLTAGE:
+                self.service["/History/FullDischarges"] += 1
 
             now = time.perf_counter()
             inPower = batteryVoltage * inCurrent
@@ -162,7 +175,9 @@ class BatteryService:
             outPower = batteryVoltage * outCurrent
             if self.lastOutPower is not None:
                 # trapezium integration
-                self.service["/History/DischargedEnergy"] += round(toKWh((self.lastOutPower.power + outPower)/2 * (now - self.lastOutPower.timestamp)), 7)
+                discharged = (self.lastOutPower.power + outPower)/2 * (now - self.lastOutPower.timestamp)
+                self.service["/History/DischargedEnergy"] += round(toKWh(discharged), 7)
+                self.service["/History/TotalAhDrawn"] += round(toAh(discharged, batteryVoltage), 4)
             self.lastOutPower = PowerSample(outPower, now)
 
             self.voltageHistory.append(batteryVoltage)
