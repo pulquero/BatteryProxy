@@ -73,7 +73,7 @@ def toAh(joules, voltage):
 
 def soc_from_voltage(voltage):
     # very approximate!!!
-    return 100 * (min(voltage, FULL_VOLTAGE) - EMPTY_VOLTAGE)/(FULL_VOLTAGE - EMPTY_VOLTAGE)
+    return min(max(100 * (voltage - EMPTY_VOLTAGE)/(FULL_VOLTAGE - EMPTY_VOLTAGE), 0), 100)
 
 
 class BatteryService:
