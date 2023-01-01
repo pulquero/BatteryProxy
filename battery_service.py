@@ -24,6 +24,8 @@ CONNECTED = 1
 FULL_VOLTAGE = 12.8
 EMPTY_VOLTAGE = 11.8
 
+VOLTAGE_DEADBAND = 1.0
+
 MAX_VOLTAGE_HISTORY = 5
 
 HIGH_VOLTAGE_ALARM = 14.8
@@ -130,16 +132,16 @@ class BatteryService:
         for service in services:
             serviceName = service.name
             current = self._get_value(serviceName, "/Dc/0/Current", 0)
-            voltage = self._get_value(serviceName, "/Dc/0/Voltage")
+            voltage = self._get_value(serviceName, "/Dc/0/Voltage", 0)
             if service.type == 'dcload':
                 outCurrent += current
                 # highest should be most accurate as closest to battery (upstream cable losses)
-                if voltage:
+                if voltage > VOLTAGE_DEADBAND:
                     bestLoadVoltage = _safe_max(voltage, bestLoadVoltage)
             else:
                 inCurrent += current
                 # lowest should be most accurate as closest to battery (downstream cable losses)
-                if voltage:
+                if voltage > VOLTAGE_DEADBAND:
                     bestSourceVoltage = _safe_min(voltage, bestSourceVoltage)
 
         totalCurrent = inCurrent - outCurrent
