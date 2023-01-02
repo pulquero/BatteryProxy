@@ -24,12 +24,17 @@ CONNECTED = 1
 FULL_VOLTAGE = 12.8
 EMPTY_VOLTAGE = 11.8
 
+STANDARD_TEMPERATURE = 25
+TEMPERATURE_COMPENSATION = -16/1000
+
 VOLTAGE_DEADBAND = 1.0
 
 MAX_VOLTAGE_HISTORY = 5
 
 HIGH_VOLTAGE_ALARM = 14.8
 LOW_VOLTAGE_ALARM = 12.2
+
+BATTERY_TEMPERATURE_SENSOR = 0
 
 ALARM_OK = 0
 ALARM_WARNING = 1
@@ -55,6 +60,7 @@ def dbusConnection():
 
 Service = namedtuple('Service', ['name', 'type'])
 PowerSample = namedtuple('PowerSample', ['power', 'timestamp'])
+VoltageSample = namedtuple('VoltageSample', ['voltage', 'timestamp', 'temperature'])
 
 
 def _safe_min(newValue, currentValue):
@@ -73,6 +79,17 @@ def toAh(joules, voltage):
     return joules/voltage/3600
 
 
+VOLTAGE_TEXT = lambda path,value: "{:.2f}V".format(value)
+CURRENT_TEXT = lambda path,value: "{:.3f}A".format(value)
+POWER_TEXT = lambda path,value: "{:.2f}W".format(value)
+ENERGY_TEXT = lambda path,value: "{:.6f}kWh".format(value)
+SOC_TEXT = lambda path,value: "{:.0f}%".format(value)
+
+
+def compensated_voltage(voltage, temperature):
+    return voltage - (temperature - STANDARD_TEMPERATURE) * TEMPERATURE_COMPENSATION
+
+
 def soc_from_voltage(voltage):
     # very approximate!!!
     return min(max(100 * (voltage - EMPTY_VOLTAGE)/(FULL_VOLTAGE - EMPTY_VOLTAGE), 0), 100)
@@ -83,16 +100,16 @@ class BatteryService:
         self.service = VeDbusService('com.victronenergy.battery.proxy', conn)
         self.service.add_mandatory_paths(__file__, VERSION, 'dbus', DEVICE_INSTANCE_ID,
                                      PRODUCT_ID, PRODUCT_NAME, FIRMWARE_VERSION, HARDWARE_VERSION, CONNECTED)
-        self.service.add_path("/Dc/0/Voltage", 0, gettextcallback=lambda path,value: "{:.2f}V".format(value))
-        self.service.add_path("/Dc/0/Current", 0, gettextcallback=lambda path,value: "{:.3f}A".format(value))
-        self.service.add_path("/Dc/0/Power", 0, gettextcallback=lambda path,value: "{:.2f}W".format(value))
-        self.service.add_path("/Soc", None, gettextcallback=lambda path,value: "{:.0f}%".format(value))
-        self.service.add_path("/History/MinimumVoltage", None, gettextcallback=lambda path,value: "{:.2f}V".format(value))
-        self.service.add_path("/History/MaximumVoltage", None, gettextcallback=lambda path,value: "{:.2f}V".format(value))
-        self.service.add_path("/History/ChargedEnergy", 0, gettextcallback=lambda path,value: "{:.6f}kWh".format(value))
-        self.service.add_path("/History/DischargedEnergy", 0, gettextcallback=lambda path,value: "{:.6f}kWh".format(value))
+        self.service.add_path("/Dc/0/Voltage", 0, gettextcallback=VOLTAGE_TEXT)
+        self.service.add_path("/Dc/0/Current", 0, gettextcallback=CURRENT_TEXT)
+        self.service.add_path("/Dc/0/Power", 0, gettextcallback=POWER_TEXT)
+        self.service.add_path("/Soc", None, gettextcallback=SOC_TEXT)
+        self.service.add_path("/History/MinimumVoltage", None, gettextcallback=VOLTAGE_TEXT)
+        self.service.add_path("/History/MaximumVoltage", None, gettextcallback=VOLTAGE_TEXT)
+        self.service.add_path("/History/ChargedEnergy", 0, gettextcallback=ENERGY_TEXT)
+        self.service.add_path("/History/DischargedEnergy", 0, gettextcallback=ENERGY_TEXT)
         self.service.add_path("/History/TotalAhDrawn", 0, gettextcallback=lambda path,value: "{:.3f}Ah".format(value))
-        self.service.add_path("/History/DeepestDischarge", None, gettextcallback=lambda path,value: "{:.0f}%".format(value))
+        self.service.add_path("/History/DeepestDischarge", None, gettextcallback=SOC_TEXT)
         self.service.add_path("/History/FullDischarges", 0)
         self.service.add_path("/Alarms/LowVoltage", ALARM_OK)
         self.service.add_path("/Alarms/HighVoltage", ALARM_OK)
@@ -109,6 +126,10 @@ class BatteryService:
             'com.victronenergy.dcsource': {
                 '/Dc/0/Current': options,
                 '/Dc/0/Voltage': options
+            },
+            'com.victronenergy.temperature': {
+                '/Temperature': options,
+                '/TemperatureType': options
             }
         })
         self.lastInPower = None
@@ -144,9 +165,15 @@ class BatteryService:
                 if voltage > VOLTAGE_DEADBAND:
                     bestSourceVoltage = _safe_min(voltage, bestSourceVoltage)
 
+        temperature = STANDARD_TEMPERATURE
+        for serviceName in self.monitor.get_service_list('com.victronenergy.temperature'):
+            if self._get_value(serviceName, "/TemperatureType") == BATTERY_TEMPERATURE_SENSOR:
+                temperature = self._get_value(serviceName, "/Temperature", STANDARD_TEMPERATURE)
+                break
+
         totalCurrent = inCurrent - outCurrent
 
-        self.service["/Dc/0/Current"] = round(totalCurrent, 3)
+        self.service["/Dc/0/Current"] = totalCurrent
         batteryVoltage = None
         if bestLoadVoltage and bestSourceVoltage:
             batteryVoltage = (bestLoadVoltage + bestSourceVoltage)/2
@@ -157,7 +184,7 @@ class BatteryService:
         if batteryVoltage:
             self.service["/Dc/0/Voltage"] = round(batteryVoltage, 3)
             self.service["/Dc/0/Power"] = round(batteryVoltage * totalCurrent, 3)
-            soc = soc_from_voltage(batteryVoltage)
+            soc = soc_from_voltage(compensated_voltage(batteryVoltage, temperature))
             self.service["/Soc"] = soc
             self.service["/History/MinimumVoltage"] = _safe_min(batteryVoltage, self.service["/History/MinimumVoltage"])
             self.service["/History/MaximumVoltage"] = _safe_max(batteryVoltage, self.service["/History/MaximumVoltage"])
@@ -171,23 +198,25 @@ class BatteryService:
             inPower = batteryVoltage * inCurrent
             if self.lastInPower is not None:
                 # trapezium integration
-                self.service["/History/ChargedEnergy"] += round(toKWh((self.lastInPower.power + inPower)/2 * (now - self.lastInPower.timestamp)), 7)
+                charged = (self.lastInPower.power + inPower)/2 * (now - self.lastInPower.timestamp)
+                self.service["/History/ChargedEnergy"] += toKWh(charged)
             self.lastInPower = PowerSample(inPower, now)
 
             outPower = batteryVoltage * outCurrent
             if self.lastOutPower is not None:
                 # trapezium integration
                 discharged = (self.lastOutPower.power + outPower)/2 * (now - self.lastOutPower.timestamp)
-                self.service["/History/DischargedEnergy"] += round(toKWh(discharged), 7)
-                self.service["/History/TotalAhDrawn"] += round(toAh(discharged, batteryVoltage), 4)
+                self.service["/History/DischargedEnergy"] += toKWh(discharged)
+                self.service["/History/TotalAhDrawn"] += toAh(discharged, batteryVoltage)
             self.lastOutPower = PowerSample(outPower, now)
 
-            self.voltageHistory.append(batteryVoltage)
+            self.voltageHistory.append(VoltageSample(batteryVoltage, now, temperature))
             voltageHistoryLen = len(self.voltageHistory)
             if voltageHistoryLen > MAX_VOLTAGE_HISTORY:
                 del self.voltageHistory[:voltageHistoryLen-MAX_VOLTAGE_HISTORY]
             # median filter
-            filteredVoltage = sorted(self.voltageHistory)[voltageHistoryLen//2]
+            filteredVoltageSample = sorted(self.voltageHistory, key=lambda sample: sample.voltage)[voltageHistoryLen//2]
+            filteredVoltage = compensated_voltage(filteredVoltageSample.voltage, filteredVoltageSample.temperature)
             # use a filtered value for alarm checking to remove any transients/noise
             if filteredVoltage <= LOW_VOLTAGE_ALARM:
                 self.service["/Alarms/LowVoltage"] = ALARM_ALARM
@@ -202,7 +231,7 @@ class BatteryService:
 def main():
     DBusGMainLoop(set_as_default=True)
     battery = BatteryService(dbusConnection())
-    GLib.timeout_add(1000, battery.update)
+    GLib.timeout_add(250, battery.update)
     logger.info("Registered Battery Proxy")
     mainloop = GLib.MainLoop()
     mainloop.run()
