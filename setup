@@ -52,6 +52,11 @@ if [ $scriptAction == 'NONE' ] ; then
 	echo "Battery Proxy"
 	
 	standardActionPrompt
+	if [ $scriptAction == 'INSTALL' ]; then
+		prompt "Enter battery capacity: "
+		capacity=$response
+		echo "{\"capacity\": $capacity}" > "$setupOptionsDir/config.json"
+	fi
 fi
 
 
