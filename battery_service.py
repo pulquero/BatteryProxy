@@ -131,15 +131,18 @@ class BatteryService:
             'com.victronenergy.solarcharger': {
                 '/Dc/0/Current': options,
                 '/Dc/0/Voltage': options,
-                '/State': options
+                '/State': options,
+                '/Dc/0/Power': options
             },
             'com.victronenergy.dcload': {
                 '/Dc/0/Current': options,
-                '/Dc/0/Voltage': options
+                '/Dc/0/Voltage': options,
+                '/Dc/0/Power': options
             },
             'com.victronenergy.dcsource': {
                 '/Dc/0/Current': options,
-                '/Dc/0/Voltage': options
+                '/Dc/0/Voltage': options,
+                '/Dc/0/Power': options
             },
             'com.victronenergy.temperature': {
                 '/Temperature': options,
@@ -156,6 +159,7 @@ class BatteryService:
         bestLoadVoltage = None
         bestSourceVoltage = None
         totalCurrent = 0
+        totalPower = 0
         chargingState = None
 
         services = []
@@ -167,8 +171,10 @@ class BatteryService:
             serviceName = service.name
             current = self._get_value(serviceName, "/Dc/0/Current", 0)
             voltage = self._get_value(serviceName, "/Dc/0/Voltage", 0)
+            power = self._get_value(serviceName, "/Dc/0/Power", voltage * current)
             if service.type == 'dcload':
                 current = -current
+                power = -power
                 # highest should be most accurate as closest to battery (upstream cable losses)
                 if voltage > VOLTAGE_DEADBAND:
                     bestLoadVoltage = _safe_max(voltage, bestLoadVoltage)
@@ -177,6 +183,7 @@ class BatteryService:
                 if voltage > VOLTAGE_DEADBAND:
                     bestSourceVoltage = _safe_min(voltage, bestSourceVoltage)
             totalCurrent += current
+            totalPower += power
 
             if service.type == 'solarcharger':
                 chargingState = self._get_value(serviceName, "/State")
@@ -199,12 +206,11 @@ class BatteryService:
             self.service["/Dc/0/Voltage"] = round(batteryVoltage, 3)
 
             now = time.perf_counter()
-            power = batteryVoltage * totalCurrent
-            self.service["/Dc/0/Power"] = round(power, 3)
+            self.service["/Dc/0/Power"] = totalPower
             remainingAh = self.service["/RemainingAmphours"]
             if self.lastPower is not None:
                 # trapezium integration
-                energy = (self.lastPower.power + power)/2 * (now - self.lastPower.timestamp)
+                energy = (self.lastPower.power + totalPower)/2 * (now - self.lastPower.timestamp)
                 if energy > 0:
                     chargedEnergy = energy
                     self.service["/History/ChargedEnergy"] += toKWh(chargedEnergy)
@@ -216,7 +222,7 @@ class BatteryService:
                     dischargedAh = toAh(dischargedEnergy, batteryVoltage)
                     self.service["/History/TotalAhDrawn"] += dischargedAh
                     remainingAh = max(remainingAh - dischargedAh, 0)
-            self.lastPower = PowerSample(power, now)
+            self.lastPower = PowerSample(totalPower, now)
 
             if chargingState == FLOAT_STATE:
                 remainingAh = self.config['capacity']
