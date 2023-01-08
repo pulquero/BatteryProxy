@@ -126,6 +126,9 @@ class BatteryService:
         self.service.add_path("/Alarms/HighVoltage", ALARM_OK)
         self.service.add_path("/Alarms/LowSoc", ALARM_OK)
         self.service.add_path("/RemainingAmphours", self.config['capacity'], gettextcallback=AH_TEXT)
+        self._local_values = {}
+        for path in self.service._dbusobjects:
+            self._local_values[path] = self.service[path]
         options = None  # currently not used afaik
         self.monitor = DbusMonitor({
             'com.victronenergy.solarcharger': {
@@ -194,7 +197,7 @@ class BatteryService:
                 temperature = self._get_value(serviceName, "/Temperature", STANDARD_TEMPERATURE)
                 break
 
-        self.service["/Dc/0/Current"] = totalCurrent
+        self._local_values["/Dc/0/Current"] = totalCurrent
         batteryVoltage = None
         if bestLoadVoltage and bestSourceVoltage:
             batteryVoltage = (bestLoadVoltage + bestSourceVoltage)/2
@@ -203,30 +206,30 @@ class BatteryService:
         elif bestSourceVoltage:
             batteryVoltage = bestSourceVoltage
         if batteryVoltage:
-            self.service["/Dc/0/Voltage"] = round(batteryVoltage, 3)
+            self._local_values["/Dc/0/Voltage"] = round(batteryVoltage, 3)
 
             now = time.perf_counter()
-            self.service["/Dc/0/Power"] = totalPower
-            remainingAh = self.service["/RemainingAmphours"]
+            self._local_values["/Dc/0/Power"] = totalPower
+            remainingAh = self._local_values["/RemainingAmphours"]
             if self.lastPower is not None:
                 # trapezium integration
                 energy = (self.lastPower.power + totalPower)/2 * (now - self.lastPower.timestamp)
                 if energy > 0:
                     chargedEnergy = energy
-                    self.service["/History/ChargedEnergy"] += toKWh(chargedEnergy)
+                    self._local_values["/History/ChargedEnergy"] += toKWh(chargedEnergy)
                     chargedAh = toAh(chargedEnergy, batteryVoltage)
                     remainingAh = min(remainingAh + chargedAh, self.config['capacity'])
                 elif energy < 0:
                     dischargedEnergy = -energy
-                    self.service["/History/DischargedEnergy"] += toKWh(dischargedEnergy)
+                    self._local_values["/History/DischargedEnergy"] += toKWh(dischargedEnergy)
                     dischargedAh = toAh(dischargedEnergy, batteryVoltage)
-                    self.service["/History/TotalAhDrawn"] += dischargedAh
+                    self._local_values["/History/TotalAhDrawn"] += dischargedAh
                     remainingAh = max(remainingAh - dischargedAh, 0)
             self.lastPower = PowerSample(totalPower, now)
 
             if chargingState == FLOAT_STATE:
                 remainingAh = self.config['capacity']
-            self.service["/RemainingAmphours"] = remainingAh
+            self._local_values["/RemainingAmphours"] = remainingAh
 
             self.dataHistory.append(DataSample(totalCurrent, batteryVoltage, now, temperature))
             dataHistoryLen = len(self.dataHistory)
@@ -239,36 +242,41 @@ class BatteryService:
             # use a filtered value to remove any transients
             if filteredCurrent < 0:
                 dischargeCurrent = -filteredCurrent
-                self.service["/TimeToGo"] = max(round((remainingAh - DEPTH_OF_DISCHARGE/100 * self.config['capacity'])/dischargeCurrent * 3600, 0), 0)
+                self._local_values["/TimeToGo"] = max(round((remainingAh - DEPTH_OF_DISCHARGE/100 * self.config['capacity'])/dischargeCurrent * 3600, 0), 0)
             else:
-                self.service["/TimeToGo"] = FOREVER
+                self._local_values["/TimeToGo"] = FOREVER
 
             soc = soc_from_voltage(compensated_voltage(batteryVoltage, temperature))
-            self.service["/Soc"] = soc
+            self._local_values["/Soc"] = soc
             if soc < 10:
-                self.service["/Alarms/LowSoc"] = ALARM_ALARM
+                self._local_values["/Alarms/LowSoc"] = ALARM_ALARM
             else:
-                self.service["/Alarms/LowSoc"] = ALARM_OK
-            self.service["/History/MinimumVoltage"] = _safe_min(batteryVoltage, self.service["/History/MinimumVoltage"])
-            self.service["/History/MaximumVoltage"] = _safe_max(batteryVoltage, self.service["/History/MaximumVoltage"])
-            deepestDischarge = self.service["/History/DeepestDischarge"]
+                self._local_values["/Alarms/LowSoc"] = ALARM_OK
+            self._local_values["/History/MinimumVoltage"] = _safe_min(batteryVoltage, self._local_values["/History/MinimumVoltage"])
+            self._local_values["/History/MaximumVoltage"] = _safe_max(batteryVoltage, self._local_values["/History/MaximumVoltage"])
+            deepestDischarge = self._local_values["/History/DeepestDischarge"]
             if deepestDischarge is None or soc < deepestDischarge:
-                self.service["/History/DeepestDischarge"] = soc
+                self._local_values["/History/DeepestDischarge"] = soc
             if batteryVoltage <= EMPTY_VOLTAGE:
-                self.service["/History/FullDischarges"] += 1
+                self._local_values["/History/FullDischarges"] += 1
 
             # median voltage filter
             filteredVoltageSample = sorted(self.dataHistory, key=lambda sample: sample.voltage)[dataHistoryLen//2]
             filteredCompensatedVoltage = compensated_voltage(filteredVoltageSample.voltage, filteredVoltageSample.temperature)
             # use a filtered value for alarm checking to remove any transients
             if filteredCompensatedVoltage <= LOW_VOLTAGE_ALARM:
-                self.service["/Alarms/LowVoltage"] = ALARM_ALARM
+                self._local_values["/Alarms/LowVoltage"] = ALARM_ALARM
             else:
-                self.service["/Alarms/LowVoltage"] = ALARM_OK
+                self._local_values["/Alarms/LowVoltage"] = ALARM_OK
             if filteredCompensatedVoltage >= HIGH_VOLTAGE_ALARM:
-                self.service["/Alarms/HighVoltage"] = ALARM_ALARM
+                self._local_values["/Alarms/HighVoltage"] = ALARM_ALARM
             else:
-                self.service["/Alarms/HighVoltage"] = ALARM_OK
+                self._local_values["/Alarms/HighVoltage"] = ALARM_OK
+        return True
+
+    def publish(self):
+        for k,v in self._local_values.items():
+            self.service[k] = v
         return True
 
     def __str__(self):
@@ -282,7 +290,8 @@ def main():
     with configFile.open() as f:
         config = json.load(f)
     battery = BatteryService(dbusConnection(), config)
-    GLib.timeout_add(250, battery.update)
+    GLib.timeout_add(200, battery.update)
+    GLib.timeout_add_seconds(1, battery.publish)
     logger.info("Registered Battery Proxy")
     mainloop = GLib.MainLoop()
     mainloop.run()
