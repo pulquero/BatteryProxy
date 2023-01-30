@@ -125,7 +125,8 @@ class BatteryService:
         self.service.add_path("/Alarms/LowVoltage", ALARM_OK)
         self.service.add_path("/Alarms/HighVoltage", ALARM_OK)
         self.service.add_path("/Alarms/LowSoc", ALARM_OK)
-        self.service.add_path("/RemainingAmphours", self.config['capacity'], gettextcallback=AH_TEXT)
+        self.service.add_path("/Capacity", self.config['capacity'], gettextcallback=AH_TEXT)
+        self.service.add_path("/InstalledCapacity", self.config['capacity'], gettextcallback=AH_TEXT)
         self._local_values = {}
         for path in self.service._dbusobjects:
             self._local_values[path] = self.service[path]
@@ -210,7 +211,7 @@ class BatteryService:
 
             now = time.perf_counter()
             self._local_values["/Dc/0/Power"] = totalPower
-            remainingAh = self._local_values["/RemainingAmphours"]
+            remainingAh = self._local_values["/Capacity"]
             if self.lastPower is not None:
                 # trapezium integration
                 energy = (self.lastPower.power + totalPower)/2 * (now - self.lastPower.timestamp)
@@ -229,7 +230,7 @@ class BatteryService:
 
             if chargingState == FLOAT_STATE:
                 remainingAh = self.config['capacity']
-            self._local_values["/RemainingAmphours"] = remainingAh
+            self._local_values["/Capacity"] = remainingAh
 
             self.dataHistory.append(DataSample(totalCurrent, batteryVoltage, now, temperature))
             dataHistoryLen = len(self.dataHistory)
