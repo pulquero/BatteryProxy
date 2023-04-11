@@ -16,16 +16,15 @@ import time
 from pathlib import Path
 import json
 
-FULL_VOLTAGE = 12.8
-EMPTY_VOLTAGE = 11.8
-
 DEPTH_OF_DISCHARGE = 50
 
 STANDARD_TEMPERATURE = 25
 TEMPERATURE_COMPENSATION = -16/1000
 
-HIGH_VOLTAGE_ALARM = 14.8
-LOW_VOLTAGE_ALARM = 12.2
+DEFAULT_MAX_VOLTAGE = 14.8
+DEFAULT_FULL_VOLTAGE = 12.8
+DEFAULT_MIN_VOLTAGE = 12.2
+DEFAULT_EMPTY_VOLTAGE = 11.8
 
 VOLTAGE_DEADBAND = 1.0
 
@@ -72,11 +71,11 @@ DataSample = namedtuple('DataSample', ['current', 'voltage', 'timestamp', 'tempe
 
 
 def _safe_min(newValue, currentValue):
-    return min(newValue, currentValue) if currentValue else newValue
+    return min(newValue, currentValue) if currentValue is not None else newValue
 
 
 def _safe_max(newValue, currentValue):
-    return max(newValue, currentValue) if currentValue else newValue
+    return max(newValue, currentValue) if currentValue is not None else newValue
 
 
 def toKWh(joules):
@@ -99,14 +98,13 @@ def compensated_voltage(voltage, temperature):
     return voltage - (temperature - STANDARD_TEMPERATURE) * TEMPERATURE_COMPENSATION
 
 
-def soc_from_voltage(voltage):
-    # very approximate!!!
-    return min(max(100 * (voltage - EMPTY_VOLTAGE)/(FULL_VOLTAGE - EMPTY_VOLTAGE), 0), 100)
-
-
 class BatteryService:
     def __init__(self, conn, config):
         self.config = config
+        self.emptyVoltage = config.get("emptyVoltage", DEFAULT_EMPTY_VOLTAGE)
+        self.minVoltage = config.get("minVoltage", DEFAULT_MIN_VOLTAGE)
+        self.fullVoltage = config.get("fullVoltage", DEFAULT_FULL_VOLTAGE)
+        self.maxVoltage = config.get("maxVoltage", DEFAULT_MAX_VOLTAGE)
         self.service = VeDbusService('com.victronenergy.battery.proxy', conn)
         self.service.add_mandatory_paths(__file__, VERSION, 'dbus', DEVICE_INSTANCE_ID,
                                      PRODUCT_ID, PRODUCT_NAME, FIRMWARE_VERSION, HARDWARE_VERSION, CONNECTED)
@@ -247,7 +245,7 @@ class BatteryService:
             else:
                 self._local_values["/TimeToGo"] = FOREVER
 
-            soc = soc_from_voltage(compensated_voltage(batteryVoltage, temperature))
+            soc = self.soc_from_voltage(compensated_voltage(batteryVoltage, temperature))
             self._local_values["/Soc"] = soc
             if soc < 10:
                 self._local_values["/Alarms/LowSoc"] = ALARM_ALARM
@@ -258,18 +256,18 @@ class BatteryService:
             deepestDischarge = self._local_values["/History/DeepestDischarge"]
             if deepestDischarge is None or soc < deepestDischarge:
                 self._local_values["/History/DeepestDischarge"] = soc
-            if batteryVoltage <= EMPTY_VOLTAGE:
+            if batteryVoltage <= self.emptyVoltage:
                 self._local_values["/History/FullDischarges"] += 1
 
             # median voltage filter
             filteredVoltageSample = sorted(self.dataHistory, key=lambda sample: sample.voltage)[dataHistoryLen//2]
             filteredCompensatedVoltage = compensated_voltage(filteredVoltageSample.voltage, filteredVoltageSample.temperature)
             # use a filtered value for alarm checking to remove any transients
-            if filteredCompensatedVoltage <= LOW_VOLTAGE_ALARM:
+            if filteredCompensatedVoltage <= self.minVoltage:
                 self._local_values["/Alarms/LowVoltage"] = ALARM_ALARM
             else:
                 self._local_values["/Alarms/LowVoltage"] = ALARM_OK
-            if filteredCompensatedVoltage >= HIGH_VOLTAGE_ALARM:
+            if filteredCompensatedVoltage >= self.maxVoltage:
                 self._local_values["/Alarms/HighVoltage"] = ALARM_ALARM
             else:
                 self._local_values["/Alarms/HighVoltage"] = ALARM_OK
@@ -279,6 +277,10 @@ class BatteryService:
         for k,v in self._local_values.items():
             self.service[k] = v
         return True
+
+    def soc_from_voltage(self, voltage):
+        # very approximate!!!
+        return min(max(100 * (voltage - self.emptyVoltage)/(self.fullVoltage - self.emptyVoltage), 0), 100)
 
     def __str__(self):
         return PRODUCT_NAME
