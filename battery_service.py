@@ -105,6 +105,14 @@ class BatteryService:
         self.minVoltage = config.get("minVoltage", DEFAULT_MIN_VOLTAGE)
         self.fullVoltage = config.get("fullVoltage", DEFAULT_FULL_VOLTAGE)
         self.maxVoltage = config.get("maxVoltage", DEFAULT_MAX_VOLTAGE)
+
+        if self.fullVoltage > self.maxVoltage:
+            raise ValueError("maxVoltage must be greater than fullVoltage")
+        if self.minVoltage > self.fullVoltage:
+            raise ValueError("fullVoltage must be greater than minVoltage")
+        if self.emptyVoltage > self.minVoltage:
+            raise ValueError("minVoltage must be greater than emptyVoltage")
+
         self.service = VeDbusService('com.victronenergy.battery.proxy', conn)
         self.service.add_mandatory_paths(__file__, VERSION, 'dbus', DEVICE_INSTANCE_ID,
                                      PRODUCT_ID, PRODUCT_NAME, FIRMWARE_VERSION, HARDWARE_VERSION, CONNECTED)
