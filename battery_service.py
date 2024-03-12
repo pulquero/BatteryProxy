@@ -28,7 +28,7 @@ DEFAULT_EMPTY_VOLTAGE = 11.8
 
 VOLTAGE_DEADBAND = 1.0
 
-MAX_DATA_HISTORY = 9
+MAX_DATA_HISTORY = 19
 
 DEVICE_INSTANCE_ID = 1025
 PRODUCT_ID = 0
@@ -121,9 +121,6 @@ class BatteryService:
         self.service.add_path("/Dc/0/Power", 0, gettextcallback=POWER_TEXT)
         self.service.add_path("/Soc", None, gettextcallback=SOC_TEXT)
         self.service.add_path("/TimeToGo", FOREVER)
-        self.service.add_path("/Io/AllowToCharge", 1)
-        self.service.add_path("/Io/AllowToDischarge", 1)
-        self.service.add_path("/Io/AllowToBalance", 1)
         self.service.add_path("/History/MinimumVoltage", None, gettextcallback=VOLTAGE_TEXT)
         self.service.add_path("/History/MaximumVoltage", None, gettextcallback=VOLTAGE_TEXT)
         self.service.add_path("/History/ChargedEnergy", 0, gettextcallback=ENERGY_TEXT)
@@ -136,6 +133,13 @@ class BatteryService:
         self.service.add_path("/Alarms/LowSoc", ALARM_OK)
         self.service.add_path("/Capacity", self.config['capacity'], gettextcallback=AH_TEXT)
         self.service.add_path("/InstalledCapacity", self.config['capacity'], gettextcallback=AH_TEXT)
+        self.service.add_path("/Io/AllowToCharge", 1)
+        self.service.add_path("/Io/AllowToDischarge", 1)
+        self.service.add_path("/Io/AllowToBalance", 1)
+        self.service.add_path("/Info/MaxChargeVoltage", self.fullVoltage, gettextcallback=VOLTAGE_TEXT)
+        self.service.add_path("/Info/MaxChargeCurrent", self.config.get('maxChargeCurrent'), gettextcallback=CURRENT_TEXT)
+        self.service.add_path("/Info/MaxDischargeCurrent", self.config.get('maxDischargeCurrent'), gettextcallback=CURRENT_TEXT)
+
         self._local_values = {}
         for path in self.service._dbusobjects:
             self._local_values[path] = self.service[path]
@@ -206,6 +210,8 @@ class BatteryService:
             if self._get_value(serviceName, "/TemperatureType") == BATTERY_TEMPERATURE_SENSOR:
                 temperature = self._get_value(serviceName, "/Temperature", STANDARD_TEMPERATURE)
                 break
+
+        self._local_values["/Info/MaxChargeVoltage"] = compensated_voltage(self.fullVoltage, temperature)
 
         self._local_values["/Dc/0/Current"] = totalCurrent
         batteryVoltage = None
