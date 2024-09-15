@@ -113,7 +113,7 @@ class BatteryService:
         if self.emptyVoltage > self.minVoltage:
             raise ValueError("minVoltage must be greater than emptyVoltage")
 
-        self.service = VeDbusService('com.victronenergy.battery.proxy', conn)
+        self.service = VeDbusService('com.victronenergy.battery.proxy', conn, register=False)
         self.service.add_mandatory_paths(__file__, VERSION, 'dbus', DEVICE_INSTANCE_ID,
                                      PRODUCT_ID, PRODUCT_NAME, FIRMWARE_VERSION, HARDWARE_VERSION, CONNECTED)
         self.service.add_path("/Dc/0/Voltage", 0, gettextcallback=VOLTAGE_TEXT)
@@ -139,6 +139,7 @@ class BatteryService:
         self.service.add_path("/Info/MaxChargeVoltage", self.fullVoltage, gettextcallback=VOLTAGE_TEXT)
         self.service.add_path("/Info/MaxChargeCurrent", self.config.get('maxChargeCurrent'), gettextcallback=CURRENT_TEXT)
         self.service.add_path("/Info/MaxDischargeCurrent", self.config.get('maxDischargeCurrent'), gettextcallback=CURRENT_TEXT)
+        self.service.register()
 
         self._local_values = {}
         for path in self.service._dbusobjects:
