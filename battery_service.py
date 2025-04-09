@@ -18,6 +18,7 @@ from pathlib import Path
 import json
 
 DEPTH_OF_DISCHARGE = 50
+PEUKERT_K = 1.25
 
 STANDARD_TEMPERATURE = 25
 TEMPERATURE_COMPENSATION = -16/1000
@@ -264,7 +265,11 @@ class BatteryService(SettableService):
             # use a filtered value to remove any transients
             if filteredCurrent < 0:
                 dischargeCurrent = -filteredCurrent
-                self._local_values["/TimeToGo"] = max(round((remainingAh - DEPTH_OF_DISCHARGE/100 * self.config['capacity'])/dischargeCurrent * 3600, 0), 0)
+                effectiveCapacity = self.config['capacity']
+                if 'dischargeTime' in self.config:
+                    # Peukert's law
+                    effectiveCapacity *= (self.config['capacity']/self.config['dischargeTime']/dischargeCurrent)**(PEUKERT_K-1)
+                self._local_values["/TimeToGo"] = max(round((remainingAh - DEPTH_OF_DISCHARGE/100 * effectiveCapacity)/dischargeCurrent * 3600, 0), 0)
             else:
                 self._local_values["/TimeToGo"] = FOREVER
 
